@@ -1,0 +1,18 @@
+[package]
+name = "ctxline"
+description = "Model and context size in your Claude Code status line. Nothing else."
+license = "MIT"
+repository = "https://github.com/serhiileniv/ctxline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

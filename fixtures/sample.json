@@ -1,0 +1,40 @@
+{
+  "cwd": "/Users/serhiileniv/Projects",
+  "session_id": "bfacfa2b-7280-4cc6-9b55-e1cfb0baf250",
+  "transcript_path": "/Users/serhiileniv/.claude/projects/-Users-serhiileniv-Projects/bfacfa2b-7280-4cc6-9b55-e1cfb0baf250.jsonl",
+  "version": "2.1.231",
+  "model": {
+    "id": "claude-opus-5",
+    "display_name": "Opus 5"
+  },
+  "workspace": {
+    "current_dir": "/Users/serhiileniv/Projects",
+    "project_dir": "/Users/serhiileniv/Projects",
+    "added_dirs": []
+  },
+  "output_style": { "name": "default" },
+  "context_window": {
+    "total_input_tokens": 40238,
+    "total_output_tokens": 324,
+    "context_window_size": 1000000,
+    "used_percentage": 4.02,
+    "remaining_percentage": 95.98,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 324,
+      "cache_creation_input_tokens": 1197,
+      "cache_read_input_tokens": 39039
+    }
+  },
+  "cost": {
+    "total_cost_usd": 0.42,
+    "total_duration_ms": 91000,
+    "total_api_duration_ms": 60000,
+    "total_lines_added": 12,
+    "total_lines_removed": 3
+  },
+  "exceeds_200k_tokens": false,
+  "fast_mode": false,
+  "effort": { "level": "high" },
+  "thinking": { "enabled": true }
+}
