@@ -2,7 +2,7 @@
 //!
 //! Reads the status line payload from stdin and prints one line, e.g.
 //!
-//!     opus-5  40,238 / 1M
+//!     Opus 5 · 40k/1M
 //!
 //! Every field is optional: the payload's shape varies with session state and
 //! Claude Code version, so anything missing degrades the line instead of
@@ -52,6 +52,11 @@ fn main() {
     let payload: Payload = serde_json::from_str(&raw).unwrap_or_default();
     let color = std::env::var_os("NO_COLOR").is_none();
 
+    println!("{}", render(&payload, color));
+}
+
+/// The whole output format, in one place so the tests can assert on it.
+fn render(payload: &Payload, color: bool) -> String {
     let model = payload
         .model
         .as_ref()
@@ -68,23 +73,34 @@ fn main() {
             + u.cache_read_input_tokens.unwrap_or(0)
     });
 
+    // Both halves are abbreviated so the fraction reads without counting
+    // digits, and so the line barely changes width as the count climbs -- a
+    // status line that twitches mid-session is worse than one that rounds.
     let ctx = match (used, size) {
         (Some(u), s) if s > 0 => {
             let pct = (u as f64 / s as f64) * 100.0;
-            paint(&format!("{} / {}", commas(u), abbrev(s)), pressure(pct), color)
+            paint(&format!("{}/{}", abbrev(u), abbrev(s)), pressure(pct), color)
         }
-        (Some(u), _) => paint(&commas(u), GREEN, color),
-        (None, s) if s > 0 => paint(&format!("— / {}", abbrev(s)), DIM, color),
+        (Some(u), _) => paint(&abbrev(u), GREEN, color),
+        (None, s) if s > 0 => paint(&format!("—/{}", abbrev(s)), DIM, color),
         (None, _) => paint("—", DIM, color),
     };
 
-    println!("{}  {}", paint(&model, BLUE, color), ctx);
+    // The model name carries a space of its own now, so the dim dot is the
+    // only gap on the line and each side stays one visual token.
+    format!(
+        "{} {} {}",
+        paint(&model, BLUE, color),
+        paint("·", DIM, color),
+        ctx
+    )
 }
 
-/// "Opus 5" -> "opus-5", falling back to the raw id with its vendor prefix cut.
+/// The display name as given, minus any context-window marker; falls back to
+/// the raw id with its vendor prefix cut.
 fn model_name(m: &Model) -> Option<String> {
     if let Some(d) = m.display_name.as_ref().filter(|s| !s.is_empty()) {
-        return Some(strip_window(d).to_lowercase().replace(' ', "-"));
+        return Some(strip_window(d).to_string());
     }
     m.id
         .as_ref()
@@ -92,8 +108,8 @@ fn model_name(m: &Model) -> Option<String> {
         .map(|id| strip_window(id.trim_start_matches("claude-")).to_string())
 }
 
-/// Cuts a context-window marker off a model name: "Opus 5 (1M context)" and
-/// "opus-5[1m]" are both "opus-5". The window size is the other half of this
+/// Cuts a context-window marker off a model name: "Opus 5 (1M context)" is
+/// "Opus 5", "opus-5[1m]" is "opus-5". The window size is the other half of this
 /// line, so carrying it in the name too says the same thing twice. Matching on
 /// the bracket rather than on known model names means new models need no change
 /// here.
@@ -116,34 +132,19 @@ fn pressure(pct: f64) -> u8 {
     }
 }
 
-/// 40238 -> "40,238". The stdlib has no locale formatter and this isn't worth a dependency.
-fn commas(n: u64) -> String {
-    let s = n.to_string();
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, b) in bytes.iter().enumerate() {
-        if i > 0 && (bytes.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(*b as char);
-    }
-    out
-}
-
-/// Window sizes only: 200000 -> "200k", 1000000 -> "1M".
+/// 40238 -> "40k", 200000 -> "200k", 1000000 -> "1M".
 fn abbrev(n: u64) -> String {
-    if n >= 1_000_000 {
+    // The bound is 999,500 rather than 1,000,000 so that a value which would
+    // round up to "1000k" promotes to "1.0M" instead. Reachable now that token
+    // counts come through here too, not just round window sizes.
+    if n >= 999_500 {
         if n % 1_000_000 == 0 {
             format!("{}M", n / 1_000_000)
         } else {
             format!("{:.1}M", n as f64 / 1e6)
         }
     } else if n >= 1_000 {
-        if n % 1_000 == 0 {
-            format!("{}k", n / 1_000)
-        } else {
-            format!("{:.0}k", n as f64 / 1e3)
-        }
+        format!("{:.0}k", n as f64 / 1e3)
     } else {
         n.to_string()
     }
@@ -163,11 +164,15 @@ mod tests {
 
     #[test]
     fn formats_numbers() {
-        assert_eq!(commas(40238), "40,238");
-        assert_eq!(commas(1000000), "1,000,000");
-        assert_eq!(commas(42), "42");
         assert_eq!(abbrev(1_000_000), "1M");
         assert_eq!(abbrev(200_000), "200k");
+        assert_eq!(abbrev(40_238), "40k");
+        assert_eq!(abbrev(999), "999");
+        assert_eq!(abbrev(0), "0");
+        assert_eq!(abbrev(1_500_000), "1.5M");
+        // The carry: 999,600 must not print as "1000k".
+        assert_eq!(abbrev(999_000), "999k");
+        assert_eq!(abbrev(999_600), "1.0M");
     }
 
     #[test]
@@ -185,7 +190,7 @@ mod tests {
         let full = r#"{"model":{"id":"claude-opus-5","display_name":"Opus 5"},
             "cost":{"total_cost_usd":1.0},"fast_mode":false,"exceeds_200k_tokens":true}"#;
         let p: Payload = serde_json::from_str(full).unwrap();
-        assert_eq!(model_name(p.model.as_ref().unwrap()).unwrap(), "opus-5");
+        assert_eq!(model_name(p.model.as_ref().unwrap()).unwrap(), "Opus 5");
     }
 
     #[test]
@@ -197,10 +202,63 @@ mod tests {
             })
             .unwrap()
         };
-        assert_eq!(named("Opus 5 (1M context)", ""), "opus-5");
+        assert_eq!(named("Opus 5 (1M context)", ""), "Opus 5");
         assert_eq!(named("", "claude-opus-5[1m]"), "opus-5");
-        assert_eq!(named("Opus 5", "claude-opus-5"), "opus-5");
+        assert_eq!(named("Opus 5", "claude-opus-5"), "Opus 5");
         // Nothing left after the cut: keep the name rather than print blank.
-        assert_eq!(named("(1M context)", ""), "(1m-context)");
+        assert_eq!(named("(1M context)", ""), "(1M context)");
+    }
+
+    /// The output format itself. NO_COLOR-style plain text, so the assertions
+    /// are on the layout rather than on escape sequences.
+    #[test]
+    fn renders_the_line() {
+        let line = |json: &str| {
+            let p: Payload = serde_json::from_str(json).unwrap_or_default();
+            render(&p, false)
+        };
+
+        assert_eq!(
+            line(
+                r#"{"model":{"display_name":"Opus 5 (1M context)"},
+                   "context_window":{"context_window_size":1000000,
+                     "current_usage":{"input_tokens":2,
+                       "cache_creation_input_tokens":1197,
+                       "cache_read_input_tokens":39039}}}"#
+            ),
+            "Opus 5 · 40k/1M"
+        );
+
+        // Fresh session or just after /compact: current_usage is null.
+        assert_eq!(
+            line(r#"{"model":{"display_name":"Opus 5"},"context_window":{"context_window_size":200000}}"#),
+            "Opus 5 · —/200k"
+        );
+
+        // No display_name: the raw id, vendor prefix cut, left as it is.
+        assert_eq!(
+            line(
+                r#"{"model":{"id":"claude-sonnet-5"},
+                   "context_window":{"context_window_size":200000,
+                     "current_usage":{"input_tokens":170005}}}"#
+            ),
+            "sonnet-5 · 170k/200k"
+        );
+
+        assert_eq!(line("{}"), "model? · —");
+        assert_eq!(line("not json"), "model? · —");
+    }
+
+    #[test]
+    fn color_wraps_each_segment() {
+        let p: Payload = serde_json::from_str(
+            r#"{"model":{"display_name":"Opus 5"},"context_window":{"context_window_size":200000,
+               "current_usage":{"input_tokens":40238}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            render(&p, true),
+            "\x1b[38;5;110mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[38;5;71m40k/200k\x1b[0m"
+        );
     }
 }
