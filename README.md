@@ -63,6 +63,11 @@ Only these fields of the [status line payload](https://code.claude.com/docs/en/s
 Tokens in use = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
 `output_tokens` is deliberately excluded: it's the last response's size, not context occupancy.
 
+The model name is whatever the payload says, lowercased and hyphenated — no list of known models, so a
+model released tomorrow needs no change here. The one thing dropped from it is a context-window marker
+(`Opus 5 (1M context)`, `claude-opus-5[1m]`), since the window size is already the right half of the
+line.
+
 Every field is optional. The payload's shape varies with session state and Claude Code version, so
 anything missing degrades the line rather than failing it — and it always prints *something*, because a
 blank status line is the hardest kind of bug to diagnose from inside the footer.
@@ -72,6 +77,7 @@ blank status line is the hardest kind of bug to diagnose from inside the footer.
 | Normal | `opus-5  40,238 / 1M` |
 | Fresh session, or just after `/compact` | `opus-5  — / 200k` |
 | No `display_name`, falls back to `id` | `sonnet-5  170,005 / 200k` |
+| A 1M-context variant (`Opus 5 (1M context)`, `claude-opus-5[1m]`) | `opus-5  40,238 / 1M` |
 | Empty or unparseable payload | `model?  —` |
 
 Set `NO_COLOR` to disable the ANSI escapes.

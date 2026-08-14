@@ -84,12 +84,26 @@ fn main() {
 /// "Opus 5" -> "opus-5", falling back to the raw id with its vendor prefix cut.
 fn model_name(m: &Model) -> Option<String> {
     if let Some(d) = m.display_name.as_ref().filter(|s| !s.is_empty()) {
-        return Some(d.to_lowercase().replace(' ', "-"));
+        return Some(strip_window(d).to_lowercase().replace(' ', "-"));
     }
     m.id
         .as_ref()
         .filter(|s| !s.is_empty())
-        .map(|id| id.trim_start_matches("claude-").to_string())
+        .map(|id| strip_window(id.trim_start_matches("claude-")).to_string())
+}
+
+/// Cuts a context-window marker off a model name: "Opus 5 (1M context)" and
+/// "opus-5[1m]" are both "opus-5". The window size is the other half of this
+/// line, so carrying it in the name too says the same thing twice. Matching on
+/// the bracket rather than on known model names means new models need no change
+/// here.
+fn strip_window(s: &str) -> &str {
+    match s.find(['(', '[']) {
+        // A name that is nothing but a marker is left alone: better an odd
+        // label than an empty one.
+        Some(0) | None => s,
+        Some(i) => s[..i].trim_end(),
+    }
 }
 
 fn pressure(pct: f64) -> u8 {
@@ -172,5 +186,21 @@ mod tests {
             "cost":{"total_cost_usd":1.0},"fast_mode":false,"exceeds_200k_tokens":true}"#;
         let p: Payload = serde_json::from_str(full).unwrap();
         assert_eq!(model_name(p.model.as_ref().unwrap()).unwrap(), "opus-5");
+    }
+
+    #[test]
+    fn drops_the_context_window_marker() {
+        let named = |d: &str, id: &str| {
+            model_name(&Model {
+                display_name: (!d.is_empty()).then(|| d.to_string()),
+                id: Some(id.to_string()),
+            })
+            .unwrap()
+        };
+        assert_eq!(named("Opus 5 (1M context)", ""), "opus-5");
+        assert_eq!(named("", "claude-opus-5[1m]"), "opus-5");
+        assert_eq!(named("Opus 5", "claude-opus-5"), "opus-5");
+        // Nothing left after the cut: keep the name rather than print blank.
+        assert_eq!(named("(1M context)", ""), "(1m-context)");
     }
 }
