@@ -82,7 +82,7 @@ blank status line is the hardest kind of bug to diagnose from inside the footer.
 | --- | --- |
 | Normal | `Opus 5 · 40k/1M` |
 | Fresh session, or just after `/compact` | `Opus 5 · —/200k` |
-| No `display_name`, falls back to `id` | `sonnet-5 · 170k/200k` |
+| No `display_name`, falls back to `id` | `sonnet-5 · 62k/200k` |
 | A 1M-context variant (`Opus 5 (1M context)`, `claude-opus-5[1m]`) | `Opus 5 · 40k/1M` |
 | Empty or unparseable payload | `model? · —` |
 
