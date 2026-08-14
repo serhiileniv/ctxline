@@ -121,10 +121,16 @@ Everything lives in `src/main.rs`. The color constants and the `60.0` / `85.0` t
 ```sh
 cargo test
 cat fixtures/sample.json | ./target/release/ctxline
+./demo.sh
 ```
 
 `fixtures/sample.json` is a realistic payload; piping it in is the fastest way to check a change without
 restarting anything.
+
+`./demo.sh` renders every state the line can reach — both window sizes filling up, all three pressure
+tiers, each degraded payload, and both `NO_COLOR` cases — as real terminal output. A format or palette
+change looks fine on one sample and falls apart at the edges, so this is the check worth running before
+committing one.
 
 ## License
 
