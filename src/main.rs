@@ -10,7 +10,7 @@
 //! line is the hardest kind of bug to diagnose from inside the footer.
 
 use serde::Deserialize;
-use std::io::Read;
+use std::io::{Read, Write};
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -64,9 +64,16 @@ fn main() {
     let _ = std::io::stdin().read_to_string(&mut raw);
 
     let payload: Payload = serde_json::from_str(&raw).unwrap_or_default();
-    let color = std::env::var_os("NO_COLOR").is_none();
+    // no-color.org: honoured when the variable is present *and* non-empty.
+    // NO_COLOR= (set but blank) is the documented way to opt back in.
+    let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
 
-    println!("{}", render(&payload, color));
+    // Claude Code cancels an in-flight status line when a new update arrives,
+    // which closes this pipe mid-write. println! panics on a write error, and
+    // with panic = "abort" that turns a cancelled run into a crash. Discard the
+    // error instead: being cancelled is routine here, not exceptional.
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", render(&payload, color));
 }
 
 /// The whole output format, in one place so the tests can assert on it.
@@ -96,7 +103,10 @@ fn render(payload: &Payload, color: bool) -> String {
             let (c, strong) = pressure(pct);
             paint_styled(&format!("{}/{}", abbrev(u), abbrev(s)), c, strong, color)
         }
-        (Some(u), _) => paint(&abbrev(u), GREEN, color),
+        // A count with no window size to divide by: pressure is unknown, so it
+        // gets the neutral colour. Green here would claim "plenty of room" on
+        // no evidence, and it claimed it loudest at 950k.
+        (Some(u), _) => paint(&abbrev(u), DIM, color),
         (None, s) if s > 0 => paint(&format!("—/{}", abbrev(s)), DIM, color),
         (None, _) => paint("—", DIM, color),
     };
@@ -112,15 +122,25 @@ fn render(payload: &Payload, color: bool) -> String {
 }
 
 /// The display name as given, minus any context-window marker; falls back to
-/// the raw id with its vendor prefix cut.
+/// the raw id with its vendor prefix cut. Never yields a blank or padded name.
 fn model_name(m: &Model) -> Option<String> {
-    if let Some(d) = m.display_name.as_ref().filter(|s| !s.is_empty()) {
-        return Some(strip_window(d).to_string());
-    }
-    m.id
-        .as_ref()
-        .filter(|s| !s.is_empty())
-        .map(|id| strip_window(id.trim_start_matches("claude-")).to_string())
+    let source = m
+        .display_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            m.id.as_deref()
+                .filter(|s| !s.trim().is_empty())
+                // strip_prefix, not trim_start_matches: the latter strips the
+                // prefix repeatedly, so "claude-claude-x" would lose both.
+                .map(|id| id.strip_prefix("claude-").unwrap_or(id))
+        })?;
+
+    let cut = strip_window(source);
+    // A name that is nothing but a window marker keeps its marker. Better an
+    // odd label than an empty one -- a blank here leaves the line opening with
+    // a stray separator, which reads as a rendering fault rather than a name.
+    Some(if cut.is_empty() { source.trim() } else { cut }.to_string())
 }
 
 /// Cuts a context-window marker off a model name: "Opus 5 (1M context)" is
@@ -128,12 +148,13 @@ fn model_name(m: &Model) -> Option<String> {
 /// line, so carrying it in the name too says the same thing twice. Matching on
 /// the bracket rather than on known model names means new models need no change
 /// here.
+///
+/// Returns empty when nothing precedes the marker; the caller decides what to
+/// show instead.
 fn strip_window(s: &str) -> &str {
     match s.find(['(', '[']) {
-        // A name that is nothing but a marker is left alone: better an odd
-        // label than an empty one.
-        Some(0) | None => s,
-        Some(i) => s[..i].trim_end(),
+        None => s.trim(),
+        Some(i) => s[..i].trim(),
     }
 }
 
@@ -249,6 +270,56 @@ mod tests {
         assert_eq!(named("Opus 5", "claude-opus-5"), "Opus 5");
         // Nothing left after the cut: keep the name rather than print blank.
         assert_eq!(named("(1M context)", ""), "(1M context)");
+    }
+
+    /// Every path out of model_name has to produce something visible. A blank
+    /// name leaves the line opening with a stray separator, which reads as a
+    /// rendering fault rather than as a name.
+    #[test]
+    fn never_yields_a_blank_name() {
+        let named = |d: &str, id: &str| {
+            model_name(&Model {
+                display_name: Some(d.to_string()),
+                id: Some(id.to_string()),
+            })
+        };
+        // Whitespace before the marker used to cut down to "", because the
+        // guard only caught a bracket at index 0.
+        assert_eq!(named(" (1M context)", "").unwrap(), "(1M context)");
+        assert_eq!(named("\t[1m]", "").unwrap(), "[1m]");
+        // Whitespace-only display_name falls through to the id.
+        assert_eq!(named("   ", "claude-opus-5").unwrap(), "opus-5");
+        // Padding never survives into the line.
+        assert_eq!(named("  Opus 5  ", "").unwrap(), "Opus 5");
+        // Nothing usable anywhere: the caller's "model?" placeholder takes over.
+        assert_eq!(named("  ", "   "), None);
+        assert_eq!(model_name(&Model { display_name: None, id: None }), None);
+    }
+
+    #[test]
+    fn strips_the_vendor_prefix_once() {
+        let by_id = |id: &str| {
+            model_name(&Model { display_name: None, id: Some(id.to_string()) }).unwrap()
+        };
+        assert_eq!(by_id("claude-opus-5"), "opus-5");
+        // trim_start_matches would have eaten both and returned "opus-5".
+        assert_eq!(by_id("claude-claude-opus-5"), "claude-opus-5");
+        assert_eq!(by_id("gpt-4"), "gpt-4");
+    }
+
+    /// Pressure needs a denominator. Without one, the count is shown in the
+    /// neutral colour rather than green, which would assert "plenty of room".
+    #[test]
+    fn no_window_size_means_no_pressure_colour() {
+        let p: Payload = serde_json::from_str(
+            r#"{"model":{"display_name":"Opus 5"},
+               "context_window":{"current_usage":{"input_tokens":950000}}}"#,
+        )
+        .unwrap();
+        assert_eq!(render(&p, false), "Opus 5 · 950k");
+        let colored = render(&p, true);
+        assert!(colored.contains(&format!("\x1b[38;5;{}m950k", DIM)));
+        assert!(!colored.contains(&format!("\x1b[38;5;{}m950k", GREEN)));
     }
 
     /// The output format itself. NO_COLOR-style plain text, so the assertions

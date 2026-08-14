@@ -84,9 +84,15 @@ blank status line is the hardest kind of bug to diagnose from inside the footer.
 | Fresh session, or just after `/compact` | `Opus 5 · —/200k` |
 | No `display_name`, falls back to `id` | `sonnet-5 · 62k/200k` |
 | A 1M-context variant (`Opus 5 (1M context)`, `claude-opus-5[1m]`) | `Opus 5 · 40k/1M` |
+| Tokens known but no window size | `Opus 5 · 950k` (neutral — pressure needs a denominator) |
 | Empty or unparseable payload | `model? · —` |
 
-Set `NO_COLOR` to disable the ANSI escapes — bold goes with them.
+Set `NO_COLOR` to any non-empty value to disable the ANSI escapes — bold goes with them. Per
+[no-color.org](https://no-color.org) a variable that is set but empty does *not* disable color, so
+`NO_COLOR=` is the way back to a colored line without unsetting anything.
+
+Being cancelled is normal — Claude Code kills an in-flight status line when a new update arrives, which
+closes the pipe mid-write. That is treated as routine rather than as an error worth crashing over.
 
 ## Colors
 
