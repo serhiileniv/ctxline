@@ -6,7 +6,9 @@ Model and context size in your [Claude Code](https://code.claude.com) status lin
 Opus 5 · 40k/1M
 ```
 
-The token count is colored by pressure — green normally, yellow past 60%, red past 85%.
+The token count is colored by pressure — green normally, yellow past 60%, and bold rose past 85%. The
+model name is deliberately the quietest thing on the line: it changes at most once a session, so color
+here means one thing only, which is how full the window is.
 
 ## Why
 
@@ -84,13 +86,29 @@ blank status line is the hardest kind of bug to diagnose from inside the footer.
 | A 1M-context variant (`Opus 5 (1M context)`, `claude-opus-5[1m]`) | `Opus 5 · 40k/1M` |
 | Empty or unparseable payload | `model? · —` |
 
-Set `NO_COLOR` to disable the ANSI escapes.
+Set `NO_COLOR` to disable the ANSI escapes — bold goes with them.
+
+## Colors
+
+The palette is dark-terminal only. All five colors clear WCAG AA (4.5:1) on pure black; on a lighter
+dark theme the two darker ones and the separator drop into large-text territory (3.0–4.5:1), which is
+fine for a `·` that carries no information. On a light background nothing clears AA and the yellow is
+effectively invisible at 1.9:1, so a light profile will wash the line out.
+
+Past 85% the count goes **bold** as well as rose, and that is not decoration. Hue alone cannot separate
+three states for every reader: pick a pure red and it collapses into green under deuteranopia
+(ΔE2000 ≈ 4, against a just-noticeable difference of ~2.3); shift the green to fix that and it collapses
+into the yellow under protanopia instead. Searching the whole 256-color cube turns up no green/amber/red
+triple that survives both, contrasts on a dark terminal, and still reads as an alarm — the ones that
+pass the math use a pale pink for "red". Weight is a channel that survives all of it, including
+greyscale and screenshots. The rose (`168`) over a pure red (`167`) buys back most of the hue
+separation on top.
 
 ## Tweaking
 
 Everything lives in `src/main.rs`. The color constants and the `60.0` / `85.0` thresholds in
-`pressure()` are near the top. Rebuild with `cargo build --release` — no restart needed, Claude Code
-re-runs the binary on the next message.
+`pressure()` are near the top, each with the measurement behind it. Rebuild with
+`cargo build --release` — no restart needed, Claude Code re-runs the binary on the next message.
 
 ## Testing
 

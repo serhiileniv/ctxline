@@ -39,11 +39,25 @@ struct Usage {
     cache_read_input_tokens: Option<u64>,
 }
 
-const GREEN: u8 = 71;
-const YELLOW: u8 = 179;
-const RED: u8 = 167;
-const DIM: u8 = 244;
-const BLUE: u8 = 110;
+// 256-colour foregrounds, named by role rather than hue. Chosen against a dark
+// terminal; every one of them fails WCAG AA on a light background, so this is a
+// dark-theme palette by construction.
+const GREEN: u8 = 71; //  #5FAF5F  L* 64.9
+const YELLOW: u8 = 179; // #D7AF5F  L* 73.5
+/// Rose rather than a pure red (#D75F5F, 167). Under deuteranopia that red
+/// simulates to #9A8F5C against GREEN's #A79B64 -- a dE2000 of 4, where the
+/// just-noticeable difference is about 2.3, so "plenty of room" and "nearly
+/// full" were the same olive smudge for roughly 6% of men. Rose keeps enough
+/// blue to survive the collapse (dE2000 10.4) and still reads as an alarm.
+const RED: u8 = 168; //    #D75F87  L* 56.5
+const DIM: u8 = 244; //    #808080  L* 53.6
+/// The model name is a label, not a signal: it changes at most once a session.
+/// At the old #87AFD7 (110, L* 70.0) it was the brightest thing on the line,
+/// louder than the number it sits next to and still louder than the alarm
+/// colour at 90% full. Dropped below GREEN so colour on this line means one
+/// thing only -- context pressure. Kept blue, and kept clear of DIM (dE2000
+/// 23.0) so the name does not merge into the separator.
+const NAME: u8 = 68; //    #5F87D7  L* 56.7
 
 fn main() {
     let mut raw = String::new();
@@ -79,7 +93,8 @@ fn render(payload: &Payload, color: bool) -> String {
     let ctx = match (used, size) {
         (Some(u), s) if s > 0 => {
             let pct = (u as f64 / s as f64) * 100.0;
-            paint(&format!("{}/{}", abbrev(u), abbrev(s)), pressure(pct), color)
+            let (c, strong) = pressure(pct);
+            paint_styled(&format!("{}/{}", abbrev(u), abbrev(s)), c, strong, color)
         }
         (Some(u), _) => paint(&abbrev(u), GREEN, color),
         (None, s) if s > 0 => paint(&format!("—/{}", abbrev(s)), DIM, color),
@@ -90,7 +105,7 @@ fn render(payload: &Payload, color: bool) -> String {
     // only gap on the line and each side stays one visual token.
     format!(
         "{} {} {}",
-        paint(&model, BLUE, color),
+        paint(&model, NAME, color),
         paint("·", DIM, color),
         ctx
     )
@@ -122,13 +137,22 @@ fn strip_window(s: &str) -> &str {
     }
 }
 
-fn pressure(pct: f64) -> u8 {
+/// Colour and weight for a fill level.
+///
+/// The top tier is bold as well as coloured. Hue alone cannot separate three
+/// states for every reader: whatever red is picked, either green and red
+/// collapse under deuteranopia or green and yellow collapse under protanopia --
+/// a search of the 256-colour cube finds no green/amber/red triple that is
+/// separable under both, contrasts on a dark terminal, and still reads as an
+/// alarm. Weight is a channel that survives all of it, plus greyscale and
+/// screenshots.
+fn pressure(pct: f64) -> (u8, bool) {
     if pct >= 85.0 {
-        RED
+        (RED, true)
     } else if pct >= 60.0 {
-        YELLOW
+        (YELLOW, false)
     } else {
-        GREEN
+        (GREEN, false)
     }
 }
 
@@ -151,8 +175,13 @@ fn abbrev(n: u64) -> String {
 }
 
 fn paint(s: &str, c: u8, on: bool) -> String {
+    paint_styled(s, c, false, on)
+}
+
+/// Bold and colour go in one SGR sequence so the single reset closes both.
+fn paint_styled(s: &str, c: u8, bold: bool, on: bool) -> String {
     if on {
-        format!("\x1b[38;5;{}m{}\x1b[0m", c, s)
+        format!("\x1b[{}38;5;{}m{}\x1b[0m", if bold { "1;" } else { "" }, c, s)
     } else {
         s.to_string()
     }
@@ -177,9 +206,22 @@ mod tests {
 
     #[test]
     fn thresholds() {
-        assert_eq!(pressure(10.0), GREEN);
-        assert_eq!(pressure(60.0), YELLOW);
-        assert_eq!(pressure(85.0), RED);
+        assert_eq!(pressure(10.0), (GREEN, false));
+        assert_eq!(pressure(59.9), (GREEN, false));
+        assert_eq!(pressure(60.0), (YELLOW, false));
+        assert_eq!(pressure(84.9), (YELLOW, false));
+        assert_eq!(pressure(85.0), (RED, true));
+        assert_eq!(pressure(100.0), (RED, true));
+    }
+
+    /// Weight is the only pressure cue that survives colour vision deficiency,
+    /// greyscale and screenshots, so the alarm tier must carry it.
+    #[test]
+    fn only_the_alarm_tier_is_bold() {
+        assert!(!paint_styled("x", GREEN, false, true).contains("\x1b[1;"));
+        assert!(paint_styled("x", RED, true, true).starts_with("\x1b[1;38;5;168m"));
+        // NO_COLOR drops the weight along with the colour.
+        assert_eq!(paint_styled("x", RED, true, false), "x");
     }
 
     #[test]
@@ -251,14 +293,24 @@ mod tests {
 
     #[test]
     fn color_wraps_each_segment() {
-        let p: Payload = serde_json::from_str(
-            r#"{"model":{"display_name":"Opus 5"},"context_window":{"context_window_size":200000,
-               "current_usage":{"input_tokens":40238}}}"#,
-        )
-        .unwrap();
+        let at = |used: u64| {
+            let p: Payload = serde_json::from_str(&format!(
+                r#"{{"model":{{"display_name":"Opus 5"}},"context_window":{{
+                   "context_window_size":200000,"current_usage":{{"input_tokens":{}}}}}}}"#,
+                used
+            ))
+            .unwrap();
+            render(&p, true)
+        };
+
         assert_eq!(
-            render(&p, true),
-            "\x1b[38;5;110mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[38;5;71m40k/200k\x1b[0m"
+            at(40_238),
+            "\x1b[38;5;68mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[38;5;71m40k/200k\x1b[0m"
+        );
+        // 90% -- the alarm tier picks up bold in the same escape sequence.
+        assert_eq!(
+            at(180_000),
+            "\x1b[38;5;68mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[1;38;5;168m180k/200k\x1b[0m"
         );
     }
 }
