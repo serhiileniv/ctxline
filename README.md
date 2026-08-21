@@ -21,7 +21,33 @@ arrives, which makes startup time the one property that matters. The binary is ~
 
 ## Install
 
-Needs a Rust toolchain ([rustup](https://rustup.rs)).
+```sh
+curl -fsSL https://raw.githubusercontent.com/serhiileniv/ctxline/main/install.sh | sh
+```
+
+That downloads the binary for your machine into `~/.local/bin`, points
+`~/.claude/settings.json` at it, and backs up that file first if it already existed. Restart Claude
+Code afterwards — `settings.json` is read at startup.
+
+macOS and Linux, Intel and ARM. The Linux binaries are static (musl), so distro doesn't matter. If
+there's no prebuilt binary for your platform the script builds from source instead, which needs a Rust
+toolchain ([rustup](https://rustup.rs)).
+
+A few knobs, all optional:
+
+```sh
+CTXLINE_BIN_DIR=/usr/local/bin   # where the binary goes (default ~/.local/bin)
+CTXLINE_VERSION=v0.1.0           # pin a release (default: latest)
+CLAUDE_CONFIG_DIR=~/.claude      # which Claude Code config to wire up
+```
+
+Piping into `sh` means flags go through the shell: `... | sh -s -- --no-config` installs the binary and
+prints the settings snippet instead of editing anything.
+
+To undo it, restore the backup the installer named (`mv ~/.claude/settings.json.bak-<stamp>
+~/.claude/settings.json`) and delete `~/.local/bin/ctxline`. To update, run the same one-liner again.
+
+### From source
 
 ```sh
 git clone https://github.com/serhiileniv/ctxline
@@ -41,8 +67,7 @@ Then point Claude Code at the binary in `~/.claude/settings.json`:
 }
 ```
 
-`padding: 0` starts the line flush at the left edge. Restart Claude Code — `settings.json` is read at
-startup.
+`padding: 0` starts the line flush at the left edge.
 
 ## What it reads
 
