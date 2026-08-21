@@ -33,7 +33,7 @@ jobs:
             os: ubuntu-24.04-arm
             test: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install toolchain
         run: rustup update stable && rustup target add ${{ matrix.target }}
@@ -55,7 +55,7 @@ jobs:
           tar -czf "ctxline-${{ matrix.target }}.tar.gz" \
             -C "target/${{ matrix.target }}/release" ctxline
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ctxline-${{ matrix.target }}
           path: ctxline-${{ matrix.target }}.tar.gz
@@ -67,7 +67,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist
           merge-multiple: true
