@@ -1,5 +1,7 @@
 # ctxline
 
+[![support: monobank jar](https://img.shields.io/badge/support-monobank_jar-172B35)](https://send.monobank.ua/jar/3zo8nv9iuF)
+
 Model and context size in your [Claude Code](https://code.claude.com) status line. Nothing else.
 
 ```
