@@ -1,8 +1,19 @@
 # ctxline
 
+Model and context size in your [Claude Code](https://code.claude.com) status line. Nothing else.
+
+![ctxline in a Claude Code footer: Opus 5 with the token count climbing from 8k to 961k of a 1M window, green through yellow to bold rose](assets/demo.gif)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/serhiileniv/ctxline/main/install.sh | sh
+```
+
+Restart Claude Code and it's there. One static binary, ~330KB, ~3ms a render — no config to write,
+nothing to install alongside it, no transcript to parse.
+
 [![support: monobank jar](https://img.shields.io/badge/support-monobank_jar-172B35)](https://send.monobank.ua/jar/3zo8nv9iuF)
 
-Model and context size in your [Claude Code](https://code.claude.com) status line. Nothing else.
+## The line
 
 ```
 Opus 5 · 40k/1M
@@ -158,6 +169,10 @@ restarting anything.
 tiers, each degraded payload, and both `NO_COLOR` cases — as real terminal output. A format or palette
 change looks fine on one sample and falls apart at the edges, so this is the check worth running before
 committing one.
+
+The GIF at the top is generated too, never hand-drawn: `scripts/gif.sh` feeds a climbing series of
+payloads through the same binary and `vhs assets/demo.tape` records the terminal. Regenerate it after a
+palette or format change — `brew install vhs`, then `vhs assets/demo.tape`.
 
 ## License
 
