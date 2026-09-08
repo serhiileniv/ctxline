@@ -103,6 +103,11 @@ Only these fields of the [status line payload](https://code.claude.com/docs/en/s
 Tokens in use = `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
 `output_tokens` is deliberately excluded: it's the last response's size, not context occupancy.
 
+That's the last request as the API counted it, not an estimate, so it can read a little lower than the
+uncached-token figure Claude Code prints on the other side of the same footer. That one estimates what
+the *next* request will send with a cold cache: the last response plus everything added since the call
+reported here. Neither is wrong — they're one turn apart.
+
 The model name is whatever the payload says, as it says it — the same `Opus 5` that `/model` and
 `/status` show. There's no list of known models and no reformatting, so a model released tomorrow needs
 no change here. The one thing dropped from it is a context-window marker (`Opus 5 (1M context)`,
