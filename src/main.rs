@@ -2,7 +2,7 @@
 //!
 //! Reads the status line payload from stdin and prints one line, e.g.
 //!
-//!     Opus 5 · 40k/1M
+//!     Opus 5.5 · 40k/1M
 //!
 //! Every field is optional: the payload's shape varies with session state and
 //! Claude Code version, so anything missing degrades the line instead of
@@ -143,8 +143,8 @@ fn model_name(m: &Model) -> Option<String> {
     Some(if cut.is_empty() { source.trim() } else { cut }.to_string())
 }
 
-/// Cuts a context-window marker off a model name: "Opus 5 (1M context)" is
-/// "Opus 5", "opus-5[1m]" is "opus-5". The window size is the other half of this
+/// Cuts a context-window marker off a model name: "Opus 5.5 (1M context)" is
+/// "Opus 5.5", "opus-5-5[1m]" is "opus-5-5". The window size is the other half of this
 /// line, so carrying it in the name too says the same thing twice. Matching on
 /// the bracket rather than on known model names means new models need no change
 /// here.
@@ -250,10 +250,10 @@ mod tests {
         assert!(serde_json::from_str::<Payload>("{}").is_ok());
         assert!(serde_json::from_str::<Payload>("not json").is_err());
         // Unknown/extra fields in the real payload must not break parsing.
-        let full = r#"{"model":{"id":"claude-opus-5","display_name":"Opus 5"},
+        let full = r#"{"model":{"id":"claude-opus-5-5","display_name":"Opus 5.5"},
             "cost":{"total_cost_usd":1.0},"fast_mode":false,"exceeds_200k_tokens":true}"#;
         let p: Payload = serde_json::from_str(full).unwrap();
-        assert_eq!(model_name(p.model.as_ref().unwrap()).unwrap(), "Opus 5");
+        assert_eq!(model_name(p.model.as_ref().unwrap()).unwrap(), "Opus 5.5");
     }
 
     #[test]
@@ -265,9 +265,9 @@ mod tests {
             })
             .unwrap()
         };
-        assert_eq!(named("Opus 5 (1M context)", ""), "Opus 5");
-        assert_eq!(named("", "claude-opus-5[1m]"), "opus-5");
-        assert_eq!(named("Opus 5", "claude-opus-5"), "Opus 5");
+        assert_eq!(named("Opus 5.5 (1M context)", ""), "Opus 5.5");
+        assert_eq!(named("", "claude-opus-5-5[1m]"), "opus-5-5");
+        assert_eq!(named("Opus 5.5", "claude-opus-5-5"), "Opus 5.5");
         // Nothing left after the cut: keep the name rather than print blank.
         assert_eq!(named("(1M context)", ""), "(1M context)");
     }
@@ -288,9 +288,9 @@ mod tests {
         assert_eq!(named(" (1M context)", "").unwrap(), "(1M context)");
         assert_eq!(named("\t[1m]", "").unwrap(), "[1m]");
         // Whitespace-only display_name falls through to the id.
-        assert_eq!(named("   ", "claude-opus-5").unwrap(), "opus-5");
+        assert_eq!(named("   ", "claude-opus-5-5").unwrap(), "opus-5-5");
         // Padding never survives into the line.
-        assert_eq!(named("  Opus 5  ", "").unwrap(), "Opus 5");
+        assert_eq!(named("  Opus 5.5  ", "").unwrap(), "Opus 5.5");
         // Nothing usable anywhere: the caller's "model?" placeholder takes over.
         assert_eq!(named("  ", "   "), None);
         assert_eq!(model_name(&Model { display_name: None, id: None }), None);
@@ -301,9 +301,9 @@ mod tests {
         let by_id = |id: &str| {
             model_name(&Model { display_name: None, id: Some(id.to_string()) }).unwrap()
         };
-        assert_eq!(by_id("claude-opus-5"), "opus-5");
-        // trim_start_matches would have eaten both and returned "opus-5".
-        assert_eq!(by_id("claude-claude-opus-5"), "claude-opus-5");
+        assert_eq!(by_id("claude-opus-5-5"), "opus-5-5");
+        // trim_start_matches would have eaten both and returned "opus-5-5".
+        assert_eq!(by_id("claude-claude-opus-5-5"), "claude-opus-5-5");
         assert_eq!(by_id("gpt-4"), "gpt-4");
     }
 
@@ -312,11 +312,11 @@ mod tests {
     #[test]
     fn no_window_size_means_no_pressure_colour() {
         let p: Payload = serde_json::from_str(
-            r#"{"model":{"display_name":"Opus 5"},
+            r#"{"model":{"display_name":"Opus 5.5"},
                "context_window":{"current_usage":{"input_tokens":950000}}}"#,
         )
         .unwrap();
-        assert_eq!(render(&p, false), "Opus 5 · 950k");
+        assert_eq!(render(&p, false), "Opus 5.5 · 950k");
         let colored = render(&p, true);
         assert!(colored.contains(&format!("\x1b[38;5;{}m950k", DIM)));
         assert!(!colored.contains(&format!("\x1b[38;5;{}m950k", GREEN)));
@@ -333,19 +333,19 @@ mod tests {
 
         assert_eq!(
             line(
-                r#"{"model":{"display_name":"Opus 5 (1M context)"},
+                r#"{"model":{"display_name":"Opus 5.5 (1M context)"},
                    "context_window":{"context_window_size":1000000,
                      "current_usage":{"input_tokens":2,
                        "cache_creation_input_tokens":1197,
                        "cache_read_input_tokens":39039}}}"#
             ),
-            "Opus 5 · 40k/1M"
+            "Opus 5.5 · 40k/1M"
         );
 
         // Fresh session or just after /compact: current_usage is null.
         assert_eq!(
-            line(r#"{"model":{"display_name":"Opus 5"},"context_window":{"context_window_size":200000}}"#),
-            "Opus 5 · —/200k"
+            line(r#"{"model":{"display_name":"Opus 5.5"},"context_window":{"context_window_size":200000}}"#),
+            "Opus 5.5 · —/200k"
         );
 
         // No display_name: the raw id, vendor prefix cut, left as it is.
@@ -366,7 +366,7 @@ mod tests {
     fn color_wraps_each_segment() {
         let at = |used: u64| {
             let p: Payload = serde_json::from_str(&format!(
-                r#"{{"model":{{"display_name":"Opus 5"}},"context_window":{{
+                r#"{{"model":{{"display_name":"Opus 5.5"}},"context_window":{{
                    "context_window_size":200000,"current_usage":{{"input_tokens":{}}}}}}}"#,
                 used
             ))
@@ -376,12 +376,12 @@ mod tests {
 
         assert_eq!(
             at(40_238),
-            "\x1b[38;5;68mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[38;5;71m40k/200k\x1b[0m"
+            "\x1b[38;5;68mOpus 5.5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[38;5;71m40k/200k\x1b[0m"
         );
         // 90% -- the alarm tier picks up bold in the same escape sequence.
         assert_eq!(
             at(180_000),
-            "\x1b[38;5;68mOpus 5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[1;38;5;168m180k/200k\x1b[0m"
+            "\x1b[38;5;68mOpus 5.5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[1;38;5;168m180k/200k\x1b[0m"
         );
     }
 }

@@ -4,8 +4,8 @@
   "transcript_path": "/Users/serhiileniv/.claude/projects/-Users-serhiileniv-Projects/bfacfa2b-7280-4cc6-9b55-e1cfb0baf250.jsonl",
   "version": "2.1.231",
   "model": {
-    "id": "claude-opus-5",
-    "display_name": "Opus 5"
+    "id": "claude-opus-5-5",
+    "display_name": "Opus 5.5"
   },
   "workspace": {
     "current_dir": "/Users/serhiileniv/Projects",

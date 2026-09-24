@@ -28,7 +28,7 @@ box() {
 }
 
 line() {
-  printf '{"model":{"display_name":"Opus 5"},"context_window":{"context_window_size":%s,"current_usage":{"input_tokens":%s}}}' \
+  printf '{"model":{"display_name":"Opus 5.5"},"context_window":{"context_window_size":%s,"current_usage":{"input_tokens":%s}}}' \
     "$WINDOW" "$1" | "$B"
 }
 

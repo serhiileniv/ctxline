@@ -2,7 +2,7 @@
 
 Model and context size in your [Claude Code](https://code.claude.com) status line. Nothing else.
 
-![ctxline in a Claude Code footer: Opus 5 with the token count climbing from 8k to 961k of a 1M window, green through yellow to bold rose](assets/demo.gif)
+![ctxline in a Claude Code footer: Opus 5.5 with the token count climbing from 8k to 961k of a 1M window, green through yellow to bold rose](assets/demo.gif)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/serhiileniv/ctxline/main/install.sh | sh
@@ -16,7 +16,7 @@ nothing to install alongside it, no transcript to parse.
 ## The line
 
 ```
-Opus 5 · 40k/1M
+Opus 5.5 · 40k/1M
 ```
 
 The token count is colored by pressure — green normally, yellow past 60%, and bold rose past 85%. The
@@ -88,7 +88,7 @@ Only these fields of the [status line payload](https://code.claude.com/docs/en/s
 
 ```jsonc
 {
-  "model": { "id": "claude-opus-5", "display_name": "Opus 5" },
+  "model": { "id": "claude-opus-5-5", "display_name": "Opus 5.5" },
   "context_window": {
     "context_window_size": 1000000,
     "current_usage": {                 // null before the first API call and right after /compact
@@ -108,10 +108,10 @@ uncached-token figure Claude Code prints on the other side of the same footer. T
 the *next* request will send with a cold cache: the last response plus everything added since the call
 reported here. Neither is wrong — they're one turn apart.
 
-The model name is whatever the payload says, as it says it — the same `Opus 5` that `/model` and
+The model name is whatever the payload says, as it says it — the same `Opus 5.5` that `/model` and
 `/status` show. There's no list of known models and no reformatting, so a model released tomorrow needs
-no change here. The one thing dropped from it is a context-window marker (`Opus 5 (1M context)`,
-`claude-opus-5[1m]`), since the window size is already the right half of the line.
+no change here. The one thing dropped from it is a context-window marker (`Opus 5.5 (1M context)`,
+`claude-opus-5-5[1m]`), since the window size is already the right half of the line.
 
 Both numbers are abbreviated to the same shape. `40k/1M` is a fraction you can read without counting
 digits, and it barely changes width as the count climbs — a status line that twitches while you're
@@ -123,11 +123,11 @@ blank status line is the hardest kind of bug to diagnose from inside the footer.
 
 | Situation | Output |
 | --- | --- |
-| Normal | `Opus 5 · 40k/1M` |
-| Fresh session, or just after `/compact` | `Opus 5 · —/200k` |
+| Normal | `Opus 5.5 · 40k/1M` |
+| Fresh session, or just after `/compact` | `Opus 5.5 · —/200k` |
 | No `display_name`, falls back to `id` | `sonnet-5 · 62k/200k` |
-| A 1M-context variant (`Opus 5 (1M context)`, `claude-opus-5[1m]`) | `Opus 5 · 40k/1M` |
-| Tokens known but no window size | `Opus 5 · 950k` (neutral — pressure needs a denominator) |
+| A 1M-context variant (`Opus 5.5 (1M context)`, `claude-opus-5-5[1m]`) | `Opus 5.5 · 40k/1M` |
+| Tokens known but no window size | `Opus 5.5 · 950k` (neutral — pressure needs a denominator) |
 | Empty or unparseable payload | `model? · —` |
 
 Set `NO_COLOR` to any non-empty value to disable the ANSI escapes — bold goes with them. Per
