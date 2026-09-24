@@ -3,7 +3,7 @@ name = "ctxline"
 description = "Model and context size in your Claude Code status line. Nothing else."
 license = "MIT"
 repository = "https://github.com/serhiileniv/ctxline"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]
