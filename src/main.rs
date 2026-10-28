@@ -11,12 +11,21 @@
 
 use serde::Deserialize;
 use std::io::{Read, Write};
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Payload {
     model: Option<Model>,
     context_window: Option<ContextWindow>,
+    workspace: Option<Workspace>,
+    cwd: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Workspace {
+    project_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,11 +82,27 @@ fn main() {
     // with panic = "abort" that turns a cancelled run into a crash. Discard the
     // error instead: being cancelled is routine here, not exceptional.
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{}", render(&payload, color));
+    let window = window_arg(std::env::args().skip(1)).or_else(|| {
+        let project = payload
+            .workspace
+            .as_ref()
+            .and_then(|w| w.project_dir.as_deref())
+            .or(payload.cwd.as_deref());
+        let env = |k| std::env::var_os(k).filter(|v| !v.is_empty());
+        let files = settings_files(
+            project,
+            env("CLAUDE_CONFIG_DIR").map(PathBuf::from),
+            env("HOME").map(PathBuf::from),
+        );
+        let model = payload.model.as_ref().and_then(|m| m.id.as_deref());
+        let compact = env("CLAUDE_CODE_AUTO_COMPACT_WINDOW");
+        compaction_window(model, compact.as_ref().and_then(|v| v.to_str()), &files)
+    });
+    let _ = writeln!(out, "{}", render(&payload, window, color));
 }
 
 /// The whole output format, in one place so the tests can assert on it.
-fn render(payload: &Payload, color: bool) -> String {
+fn render(payload: &Payload, window: Option<u64>, color: bool) -> String {
     let model = payload
         .model
         .as_ref()
@@ -86,6 +111,13 @@ fn render(payload: &Payload, color: bool) -> String {
 
     let cw = payload.context_window.as_ref();
     let size = cw.and_then(|c| c.context_window_size).unwrap_or(0);
+    // The auto-compact window (--window, env or settings), which the payload does
+    // not carry. Capped at the model's window, as Claude Code caps it.
+    let size = match (window, size) {
+        (Some(w), 0) => w,
+        (Some(w), s) => w.min(s),
+        (None, s) => s,
+    };
     let used = cw.and_then(|c| c.current_usage.as_ref()).map(|u| {
         // What is resident in the window. output_tokens is deliberately
         // excluded: it is the last response's size, not context occupancy.
@@ -155,6 +187,116 @@ fn strip_window(s: &str) -> &str {
     match s.find(['(', '[']) {
         None => s.trim(),
         Some(i) => s[..i].trim(),
+    }
+}
+
+/// `--window 400k` or `--window=400k`. A typo renders as no flag rather than
+/// breaking the line.
+fn window_arg(mut args: impl Iterator<Item = String>) -> Option<u64> {
+    let value = loop {
+        let a = args.next()?;
+        if a == "--window" {
+            break args.next()?;
+        }
+        if let Some(v) = a.strip_prefix("--window=") {
+            break v.to_string();
+        }
+    };
+    parse_window(&value)
+}
+
+/// A plain count or a k/M suffix, integers only; anything else is None.
+fn parse_window(value: &str) -> Option<u64> {
+    let (digits, scale) = match value.char_indices().last()? {
+        (i, 'k' | 'K') => (&value[..i], 1_000),
+        (i, 'm' | 'M') => (&value[..i], 1_000_000),
+        _ => (value, 1),
+    };
+    digits
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(scale)
+        .filter(|&n| n > 0)
+}
+
+#[cfg(target_os = "macos")]
+const MANAGED: &str = "/Library/Application Support/ClaudeCode/managed-settings.json";
+#[cfg(not(target_os = "macos"))]
+const MANAGED: &str = "/etc/claude-code/managed-settings.json";
+
+/// Settings files, highest precedence first. Server-managed settings, MDM
+/// policies and `claude --settings` never reach a file here, so they can't be
+/// seen; --window covers those by hand.
+fn settings_files(
+    project_dir: Option<&str>,
+    config_dir: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut files = vec![PathBuf::from(MANAGED)];
+    if let Some(p) = project_dir {
+        let dir = Path::new(p).join(".claude");
+        files.push(dir.join("settings.local.json"));
+        files.push(dir.join("settings.json"));
+    }
+    if let Some(dir) = config_dir.or_else(|| home.map(|h| h.join(".claude"))) {
+        files.push(dir.join("settings.json"));
+    }
+    files
+}
+
+/// The auto-compact window Claude Code would use for this model, or None for
+/// the model's own window. Resolved the way Claude Code does it: the env var,
+/// then the first file that sets a window -- its per-model entry before its
+/// top-level key. "auto" is a setting too: it stops the search at the tuned
+/// window rather than falling through to a lower file.
+fn compaction_window(model_id: Option<&str>, env: Option<&str>, files: &[PathBuf]) -> Option<u64> {
+    if let Some(n) = env.and_then(parse_window) {
+        return Some(n);
+    }
+    let model = model_id.map(canonical);
+    files
+        .iter()
+        .find_map(|f| {
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(f).ok()?).ok()?;
+            let entry = model
+                .and_then(|m| {
+                    let all = v.get("modelSettings")?.as_object()?;
+                    all.iter().find(|(k, _)| canonical(k) == m)
+                })
+                .and_then(|(_, e)| e.get("autoCompactWindow"));
+            let found = [entry, v.get("autoCompactWindow")]
+                .into_iter()
+                .flatten()
+                .find_map(window_setting);
+            found
+        })
+        .flatten()
+}
+
+/// Some(Some(n)) for a window, Some(None) for "auto", None for unset or invalid.
+fn window_setting(v: &Value) -> Option<Option<u64>> {
+    match v {
+        Value::String(s) if s == "auto" => Some(None),
+        _ => v.as_u64().filter(|&n| n > 0).map(Some),
+    }
+}
+
+/// The settings key for a model id: "us.anthropic.claude-opus-5-5-20260915-v1:0",
+/// "claude-opus-5-5@20260915" and "claude-opus-5-5[1m]" are all
+/// "claude-opus-5-5", as Claude Code matches them.
+fn canonical(id: &str) -> &str {
+    // The path first: a Bedrock ARN carries ':' ahead of its last '/'.
+    let id = &id[id.rfind('/').map_or(0, |i| i + 1)..];
+    let id = &id[..id.find(['[', '@', ':']).unwrap_or(id.len())];
+    let id = &id[id.rfind('.').map_or(0, |i| i + 1)..];
+    let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+    let id = match id.rsplit_once('-') {
+        Some((head, t)) if t.strip_prefix('v').is_some_and(digits) => head,
+        _ => id,
+    };
+    match id.rsplit_once('-') {
+        Some((head, t)) if t.len() == 8 && digits(t) => head,
+        _ => id,
     }
 }
 
@@ -316,8 +458,8 @@ mod tests {
                "context_window":{"current_usage":{"input_tokens":950000}}}"#,
         )
         .unwrap();
-        assert_eq!(render(&p, false), "Opus 5.5 · 950k");
-        let colored = render(&p, true);
+        assert_eq!(render(&p, None, false), "Opus 5.5 · 950k");
+        let colored = render(&p, None, true);
         assert!(colored.contains(&format!("\x1b[38;5;{}m950k", DIM)));
         assert!(!colored.contains(&format!("\x1b[38;5;{}m950k", GREEN)));
     }
@@ -328,7 +470,7 @@ mod tests {
     fn renders_the_line() {
         let line = |json: &str| {
             let p: Payload = serde_json::from_str(json).unwrap_or_default();
-            render(&p, false)
+            render(&p, None, false)
         };
 
         assert_eq!(
@@ -371,7 +513,7 @@ mod tests {
                 used
             ))
             .unwrap();
-            render(&p, true)
+            render(&p, None, true)
         };
 
         assert_eq!(
@@ -383,5 +525,184 @@ mod tests {
             at(180_000),
             "\x1b[38;5;68mOpus 5.5\x1b[0m \x1b[38;5;244m·\x1b[0m \x1b[1;38;5;168m180k/200k\x1b[0m"
         );
+    }
+
+    fn usage(used: u64, size: Option<u64>) -> Payload {
+        let size = size.map_or(String::new(), |s| format!(r#""context_window_size":{},"#, s));
+        serde_json::from_str(&format!(
+            r#"{{"model":{{"display_name":"Opus 5.5"}},"context_window":{{
+               {}"current_usage":{{"input_tokens":{}}}}}}}"#,
+            size, used
+        ))
+        .unwrap()
+    }
+
+    /// The case that motivated the flag: autoCompactWindow 400k on a 1M model.
+    /// Against 1M this was a calm green 36% one step before compaction.
+    #[test]
+    fn window_sets_the_denominator() {
+        let p = usage(364_000, Some(1_000_000));
+        assert_eq!(render(&p, Some(400_000), false), "Opus 5.5 · 364k/400k");
+        assert!(render(&p, Some(400_000), true).contains("\x1b[1;38;5;168m364k/400k"));
+    }
+
+    /// Claude Code caps the window at the model's own, so a 200k model keeps
+    /// its 200k under a flag set for a 1M one.
+    #[test]
+    fn window_never_exceeds_the_model_window() {
+        let p = usage(150_000, Some(200_000));
+        assert_eq!(render(&p, Some(400_000), false), "Opus 5.5 · 150k/200k");
+    }
+
+    /// The flag is a denominator, so it brings pressure colour back too.
+    #[test]
+    fn window_without_payload_size() {
+        let p = usage(364_000, None);
+        assert_eq!(render(&p, Some(400_000), false), "Opus 5.5 · 364k/400k");
+        assert!(render(&p, Some(400_000), true).contains("\x1b[1;38;5;168m364k/400k"));
+    }
+
+    fn args(a: &[&str]) -> Option<u64> {
+        window_arg(a.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn parses_window_forms() {
+        for a in [
+            &["--window", "400000"][..],
+            &["--window", "400k"],
+            &["--window", "400K"],
+            &["--window=400k"],
+        ] {
+            assert_eq!(args(a), Some(400_000), "{:?}", a);
+        }
+        assert_eq!(args(&["--window", "1M"]), Some(1_000_000));
+        assert_eq!(args(&["--window=1m"]), Some(1_000_000));
+    }
+
+    /// A bad flag renders as no flag: the line must never break over its own
+    /// configuration.
+    #[test]
+    fn bad_window_args_are_ignored() {
+        for a in [
+            &[][..],
+            &["--window"],
+            &["--window", "abc"],
+            &["--window", "0"],
+            &["--window", "1.5M"],
+            &["--window", "k"],
+            &["--window", "99999999999999999999k"],
+            &["--foo"],
+        ] {
+            assert_eq!(args(a), None, "{:?}", a);
+        }
+    }
+
+    /// A throwaway settings tree under the system temp dir, never ~/.claude.
+    struct Tree(PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Tree {
+            let d = std::env::temp_dir().join(format!("ctxline-{}-{}", name, std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            Tree(d)
+        }
+        fn file(&self, name: &str, json: &str) -> PathBuf {
+            let p = self.0.join(name);
+            std::fs::write(&p, json).unwrap();
+            p
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const MINE: &str = r#"{"modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000},
+        "claude-fable-5-1":{"effortLevel":"xhigh"}}}"#;
+
+    #[test]
+    fn reads_the_window_per_model() {
+        let t = Tree::new("per-model");
+        let user = [t.file("user.json", MINE)];
+        assert_eq!(compaction_window(Some("claude-opus-5-5"), None, &user), Some(400_000));
+        assert_eq!(compaction_window(Some("claude-opus-5-5[1m]"), None, &user), Some(400_000));
+        // Fable has an entry, but not for the window: nothing leaks across.
+        assert_eq!(compaction_window(Some("claude-fable-5-1"), None, &user), None);
+        assert_eq!(compaction_window(None, None, &user), None);
+    }
+
+    #[test]
+    fn top_level_applies_without_a_model_entry() {
+        let t = Tree::new("top-level");
+        let f = [t.file("s.json", r#"{"autoCompactWindow":300000,
+            "modelSettings":{"claude-opus-5-5":{"autoCompactWindow":400000}}}"#)];
+        assert_eq!(compaction_window(Some("claude-fable-5-1"), None, &f), Some(300_000));
+        assert_eq!(compaction_window(Some("claude-opus-5-5"), None, &f), Some(400_000));
+    }
+
+    #[test]
+    fn higher_files_win_and_auto_stops_the_search() {
+        let t = Tree::new("precedence");
+        let high = t.file("high.json", r#"{"autoCompactWindow":250000}"#);
+        let empty = t.file("empty.json", r#"{"theme":"light"}"#);
+        let auto = t.file("auto.json", r#"{"autoCompactWindow":"auto"}"#);
+        let low = t.file("low.json", MINE);
+        let m = Some("claude-opus-5-5");
+        assert_eq!(compaction_window(m, None, &[high.clone(), low.clone()]), Some(250_000));
+        assert_eq!(compaction_window(m, None, &[empty.clone(), low.clone()]), Some(400_000));
+        assert_eq!(compaction_window(m, None, &[auto, low.clone()]), None);
+        // The env var beats every file.
+        assert_eq!(compaction_window(m, Some("500k"), &[high, low]), Some(500_000));
+    }
+
+    #[test]
+    fn broken_or_missing_files_are_skipped() {
+        let t = Tree::new("broken");
+        let low = t.file("low.json", MINE);
+        let m = Some("claude-opus-5-5");
+        let files = [
+            t.0.join("missing.json"),
+            t.file("garbage.json", "not json"),
+            t.file("bad-value.json", r#"{"autoCompactWindow":"lots"}"#),
+            t.file("zero.json", r#"{"autoCompactWindow":0}"#),
+            t.file("wrong-shape.json", r#"{"modelSettings":[1,2]}"#),
+            low,
+        ];
+        assert_eq!(compaction_window(m, None, &files), Some(400_000));
+        assert_eq!(compaction_window(m, Some("nonsense"), &files), Some(400_000));
+        assert_eq!(compaction_window(m, None, &[]), None);
+    }
+
+    #[test]
+    fn canonical_ids() {
+        for id in [
+            "claude-opus-5-5",
+            "claude-opus-5-5[1m]",
+            "claude-opus-5-5-20260915",
+            "us.anthropic.claude-opus-5-5-20260915-v1:0",
+            "claude-opus-5-5@20260915",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-5-5-20260915-v1:0",
+        ] {
+            assert_eq!(canonical(id), "claude-opus-5-5", "{}", id);
+        }
+    }
+
+    #[test]
+    fn settings_files_in_precedence_order() {
+        let home = PathBuf::from("/h");
+        let f = settings_files(Some("/p"), None, Some(home.clone()));
+        assert_eq!(f[1..], [
+            PathBuf::from("/p/.claude/settings.local.json"),
+            PathBuf::from("/p/.claude/settings.json"),
+            PathBuf::from("/h/.claude/settings.json"),
+        ]);
+        assert!(f[0].ends_with("managed-settings.json"));
+        // CLAUDE_CONFIG_DIR replaces ~/.claude; no project dir drops the project files.
+        let f = settings_files(None, Some(PathBuf::from("/c")), Some(home));
+        assert_eq!(f[1..], [PathBuf::from("/c/settings.json")]);
     }
 }

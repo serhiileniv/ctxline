@@ -15,6 +15,10 @@ if [[ ! -x "$B" ]]; then
   exit 1
 fi
 
+# Your own autoCompactWindow would otherwise change every row below.
+export HOME=/nonexistent
+unset CLAUDE_CONFIG_DIR CLAUDE_CODE_AUTO_COMPACT_WINDOW
+
 D=$'\033[38;5;244m'   # label grey, deliberately quieter than anything ctxline prints
 R=$'\033[0m'
 
@@ -41,6 +45,11 @@ printf '   %syellow     >60%%%s  ' "$D" "$R"; fill "Opus 5.5" 200000 130000
 printf '   %sbold rose  >85%%%s  ' "$D" "$R"; fill "Opus 5.5" 200000 180000
 printf '\n   %sthe top tier is bold as well as coloured: hue alone cannot separate%s\n' "$D" "$R"
 printf '   %sthree states for a red/green colour-deficient reader.%s\n' "$D" "$R"
+
+head "--window 400k (auto-compact window)"
+J='{"model":{"display_name":"Opus 5.5"},"context_window":{"context_window_size":1000000,"current_usage":{"input_tokens":364000}}}'
+printf '   %swithout   %s' "$D" "$R"; printf '%s' "$J" | "$B"
+printf '   %swith      %s' "$D" "$R"; printf '%s' "$J" | "$B" --window 400k
 
 head "degraded states"
 printf '   %sfresh / post-compact  %s' "$D" "$R"

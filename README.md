@@ -8,7 +8,7 @@ Model and context size in your [Claude Code](https://code.claude.com) status lin
 curl -fsSL https://raw.githubusercontent.com/serhiileniv/ctxline/main/install.sh | sh
 ```
 
-Restart Claude Code and it's there. One static binary, ~330KB, ~3ms a render — no config to write,
+Restart Claude Code and it's there. One static binary, ~350KB, ~3ms a render — no config to write,
 nothing to install alongside it, no transcript to parse.
 
 [![support: monobank jar](https://img.shields.io/badge/support-monobank_jar-172B35)](https://send.monobank.ua/jar/3zo8nv9iuF)
@@ -27,10 +27,11 @@ here means one thing only, which is how full the window is.
 
 Claude Code pipes a JSON payload to a command of your choosing on every assistant message and renders
 its stdout in the footer. That payload already carries a `context_window` object, so this is a pure
-`stdin → stdout` filter: no transcript parsing, no subprocesses, no I/O of its own.
+`stdin → stdout` filter: no transcript parsing, no subprocesses. The only files it reads are Claude
+Code's own settings, for the [auto-compact window](#auto-compact-window).
 
 It's written in Rust because Claude Code **cancels an in-flight status line script** when a new update
-arrives, which makes startup time the one property that matters. The binary is ~330KB and runs in ~3ms.
+arrives, which makes startup time the one property that matters. The binary is ~350KB and runs in ~3ms.
 
 ## Install
 
@@ -81,6 +82,25 @@ Then point Claude Code at the binary in `~/.claude/settings.json`:
 ```
 
 `padding: 0` starts the line flush at the left edge.
+
+### Auto-compact window
+
+If you set `autoCompactWindow` (or `/autocompact`), the count and its color track that window instead of the full one,
+with no setup: `364k/1M` in green becomes `364k/400k` in bold rose. The payload doesn't carry this setting, so
+ctxline resolves it the way Claude Code does, first hit wins:
+
+1. `--window 400k` in the status line command
+2. `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
+3. managed `managed-settings.json`, then `.claude/settings.local.json`, `.claude/settings.json` in the project, then
+   `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`). In each file, the model's `modelSettings` entry wins over
+   the top-level key, and `"auto"` stops the search.
+
+- Per model: switch to a model without an override and the line goes back to its full window.
+- Capped at the model's window, so a 200k model still reads `/200k`.
+- Invisible to it: server-managed settings, MDM policies, `managed-settings.d/`, `claude --settings` and
+  `--autocompact`. Use `--window` for those.
+- Claude Code compacts a little before the number shown (~367k of 400k observed). That buffer is
+  undocumented, so it isn't subtracted.
 
 ## What it reads
 
